@@ -32,10 +32,6 @@ jobs:
           unzip -q "Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
           mv templates/* "$TEMPLATE_DIR/"
 
-      - name: Generate debug keystore
-        run: |
-          keytool -genkeypair -v -keystore "$HOME/debug.keystore" -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"
-
       - name: Configure Godot editor settings
         run: |
           MINOR="$(echo "$GODOT_VERSION" | cut -d. -f1,2)"
@@ -46,20 +42,36 @@ jobs:
           [resource]
           export/android/android_sdk_path = "${ANDROID_HOME}"
           export/android/java_sdk_path = "${JAVA_HOME}"
-          export/android/debug_keystore = "${HOME}/debug.keystore"
-          export/android/debug_keystore_user = "androiddebugkey"
-          export/android/debug_keystore_pass = "android"
           EOF
           cp "$HOME/.config/godot/editor_settings-4.tres" "$HOME/.config/godot/editor_settings-${MINOR}.tres"
+
+      - name: Check keystore exists in repo
+        run: |
+          if [ ! -f debug.keystore ]; then
+            echo "::error::debug.keystore is missing from the repository root. Upload it next to project.godot first."
+            exit 1
+          fi
+
+      - name: Point export preset at the keystore
+        run: |
+          sed -i "s|^keystore/debug=.*|keystore/debug=\"${GITHUB_WORKSPACE}/debug.keystore\"|" export_presets.cfg
+          sed -i 's|^keystore/debug_user=.*|keystore/debug_user="androiddebugkey"|' export_presets.cfg
+          sed -i 's|^keystore/debug_password=.*|keystore/debug_password="android"|' export_presets.cfg
+          echo "--- keystore lines now: ---"
+          grep "^keystore/" export_presets.cfg || echo "(no keystore lines in preset - env vars will be used)"
 
       - name: Import project resources
         run: |
           ./Godot_v${GODOT_VERSION}-stable_linux.x86_64 --headless --path . --import || true
 
       - name: Export debug APK
+        env:
+          GODOT_ANDROID_KEYSTORE_DEBUG_PATH: ${{ github.workspace }}/debug.keystore
+          GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
+          GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
         run: |
           mkdir -p build
-          ./Godot_v${GODOT_VERSION}-stable_linux.x86_64 --headless --path . --export-debug "Android" build/metal-arena.apk
+          ./Godot_v${GODOT_VERSION}-stable_linux.x86_64 --headless --verbose --path . --export-debug "Android" build/metal-arena.apk
           test -f build/metal-arena.apk
           ls -la build/
 
